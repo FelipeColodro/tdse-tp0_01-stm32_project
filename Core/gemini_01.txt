@@ -1,0 +1,57 @@
+Este análisis detalla el proceso de arranque y ejecución de un proyecto basado en **STM32CubeHAL** para un microcontrolador **STM32F446RE** (aunque los nombres de los archivos subidos mencionan F446, el flujo es idéntico al solicitado para la serie F1).
+
+---
+
+## 1. Análisis de los Archivos Fuente
+
+### `startup_stm32f446retx.s` (El punto de partida)
+Este es el archivo de ensamblador que toma el control tras el reset del hardware.
+* **Vector Table (`g_pfnVectors`):** Define la dirección inicial del Stack Pointer y las direcciones de todos los manejadores de interrupciones (ISRs).
+* **`Reset_Handler`:** Es la primera función que se ejecuta. Realiza tres tareas críticas:
+    1.  Copia la sección `.data` de la Flash a la RAM (variables globales inicializadas).
+    2.  Limpia la sección `.bss` en la RAM (variables globales no inicializadas se ponen a cero).
+    3.  Llama a `SystemInit` (configuración básica de registros) y finalmente salta a `main()`.
+
+### `main.c` (La lógica de aplicación)
+Contiene la inicialización de periféricos y el bucle principal.
+* **`HAL_Init()`:** Inicializa el hardware básico, la memoria Flash y configura el **SysTick** para que genere una interrupción cada **1 ms** (basado inicialmente en el oscilador interno por defecto).
+* **`SystemClock_Config()`:** Es la función más importante para el rendimiento. Configura el reloj del sistema (HSI, PLL, etc.).
+* **`MX_GPIO_Init()` y `MX_USART2_UART_Init()`:** Configuran los pines para un LED (`LD2`), un botón y el puerto serie.
+* **`while(1)`:** El bucle infinito simplemente conmuta el estado del LED cada 500 ms usando `HAL_Delay(500)`.
+
+### `stm32f4xx_it.c` (Manejadores de interrupciones)
+Contiene las funciones que se ejecutan cuando ocurre un evento excepcional o una interrupción de periférico.
+* **`SysTick_Handler()`:** Esta función se llama automáticamente cada 1 ms. Dentro invoca a `HAL_IncTick()`, que incrementa un contador global utilizado por `HAL_Delay()`. Sin esta función, el LED nunca parpadearía porque el código se quedaría "atrapado" esperando que el tiempo pase.
+
+---
+
+## 2. Evolución de Frecuencias: `SystemCoreClock` y `SysTick`
+
+A continuación, se describe cómo cambian las frecuencias desde el encendido hasta el bucle principal.
+
+| Hito de Ejecución | `SystemCoreClock` (Reloj CPU) | Frecuencia de Interrupción `SysTick` | Notas |
+| :--- | :--- | :--- | :--- |
+| **Reset_Handler** (Inicio) | **16 MHz** (HSI) | **0 Hz** (Deshabilitado) | El micro inicia con el oscilador interno (HSI). |
+| **Tras `HAL_Init()`** | **16 MHz** | **1 kHz** (periodo 1 ms) | HAL configura el SysTick basándose en el HSI inicial. |
+| **Tras `SystemClock_Config()`** | **84 MHz** | **1 kHz** (periodo 1 ms) | El PLL se activa ($16\text{ MHz} / 16 \times 336 / 4 = 84\text{ MHz}$). |
+| **Bucle `while(1)`** | **84 MHz** | **1 kHz** | La frecuencia se mantiene estable para el parpadeo del LED. |
+
+### Cálculo del Reloj (PLL) según el código:
+El código utiliza el oscilador interno **HSI (16 MHz)** y configura el PLL con los siguientes parámetros:
+* **M** = 16 (Divide 16 MHz / 16 = 1 MHz)
+* **N** = 336 (Multiplica 1 MHz × 336 = 336 MHz)
+* **P** = 4 (Divide 336 MHz / 4 = **84 MHz**)
+
+Por lo tanto, el sistema termina corriendo a **84 MHz**. La función `HAL_RCC_ClockConfig` se encarga de recalibrar el **SysTick** para que, a pesar del aumento de velocidad de la CPU, la interrupción siga ocurriendo exactamente cada **1 ms**.
+
+---
+
+## 3. Resumen del Flujo de Control
+
+1.  **Hardware Reset** → Carga SP y salta a `Reset_Handler`.
+2.  **`Reset_Handler`** → Prepara la memoria RAM y llama a `main`.
+3.  **`main`** → Configura el reloj a 84 MHz y los periféricos.
+4.  **`SysTick_Handler`** → Genera el latido de tiempo de 1ms de forma asíncrona.
+5.  **`while(1)`** → Usa ese latido para esperar 500ms y cambiar el LED.
+
+¿Te gustaría que te ayude a modificar el código para que el parpadeo del LED cambie de velocidad al presionar el botón azul (B1)?
